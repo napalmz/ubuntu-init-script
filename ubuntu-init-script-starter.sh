@@ -9,7 +9,7 @@ SCRIPT_OUT="/tmp/$SCRIPT_NAME"
 command -v curl >/dev/null 2>&1 || sudo apt-get update && sudo apt-get install -y curl
 
 echo "[*] Scarico $SCRIPT_NAME da GitHub..."
-curl -fsSL "$SCRIPT_URL" -o "$SCRIPSCRIPT_OUTT2"
+curl -fsSL "$SCRIPT_URL" -o "$SCRIPT_OUT"
 chmod +x "$SCRIPT_OUT"
 
 echo "[*] Eseguo $SCRIPT_NAME..."
