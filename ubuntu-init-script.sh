@@ -1,54 +1,94 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rileva l’utente reale (non root) per file in $HOME e gruppi
+# ---- Detect context ----
 TARGET_USER="${SUDO_USER:-$USER}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 OS_CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
 ARCH="$(dpkg --print-architecture)"
 
-echo "[*] Utente target: $TARGET_USER  Home: $TARGET_HOME  Codename: $OS_CODENAME  Arch: $ARCH"
+log() { echo "[ubuntu-init] $*"; }
 
-# 1) Sudo senza password per l’utente
-echo "[*] Configuro sudo NOPASSWD per $TARGET_USER..."
-echo "$TARGET_USER ALL=(ALL) NOPASSWD:ALL" | sudo tee "/etc/sudoers.d/90-$TARGET_USER-nopasswd" >/dev/null
-sudo chmod 440 "/etc/sudoers.d/90-$TARGET_USER-nopasswd"
-sudo visudo -cf "/etc/sudoers.d/90-$TARGET_USER-nopasswd" >/dev/null
-
-# 2) Aggiorna sistema
-echo "[*] Aggiorno il sistema..."
+log "User: $TARGET_USER  Home: $TARGET_HOME  Codename: $OS_CODENAME  Arch: $ARCH"
 export DEBIAN_FRONTEND=noninteractive
+
+# ---- Helpers ----
+need_pkg() { dpkg -s "$1" >/dev/null 2>&1 || return 0 && return 1; }
+file_has_line() { local f="$1"; local patt="$2"; [ -f "$f" ] && grep -Fxq "$patt" "$f"; }
+ensure_apt_update() { sudo apt-get update -y; }
+
+# ---- 1) Ensure sudo NOPASSWD for TARGET_USER ----
+SUDOERS_DROP="/etc/sudoers.d/90-$TARGET_USER-nopasswd"
+NOPASSWD_LINE="$TARGET_USER ALL=(ALL) NOPASSWD:ALL"
+if ! file_has_line "$SUDOERS_DROP" "$NOPASSWD_LINE"; then
+  log "Configuro sudo NOPASSWD per $TARGET_USER"
+  echo "$NOPASSWD_LINE" | sudo tee "$SUDOERS_DROP" >/dev/null
+  sudo chmod 440 "$SUDOERS_DROP"
+  sudo visudo -cf "$SUDOERS_DROP" >/dev/null
+else
+  log "Sudoers già configurato"
+fi
+
+# ---- 2) System upgrade (safe) ----
+log "Aggiornamento sistema"
 sudo apt-get update -y
 sudo apt-get -o Dpkg::Options::="--force-confnew" \
-  -o Dpkg::Options::="--force-confdef" \
-  -y --with-new-pkgs upgrade
-sudo apt-get -y autoremove
+  -o Dpkg::Options::="--force-confdef" -y --with-new-pkgs upgrade || true
+sudo apt-get -y autoremove || true
 
-# 3) Installa Docker CE
-echo "[*] Aggiungo Docker Repo..."
-sudo apt-get install -y ca-certificates curl gnupg lsb-release
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-echo \
-  "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${OS_CODENAME} stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-echo "[*] Installo Docker..."
-sudo apt-get update -y
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo systemctl enable --now docker
-sudo usermod -aG docker "$TARGET_USER" || true
+# ---- 3) Docker CE repo + install (idempotent) ----
+DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
+DOCKER_KEYRING="/etc/apt/keyrings/docker.gpg"
+if ! command -v docker >/dev/null 2>&1; then
+  log "Docker non presente: preparo repo e installo"
+  sudo apt-get install -y ca-certificates curl gnupg lsb-release
+  sudo install -m 0755 -d /etc/apt/keyrings
+  if [ ! -f "$DOCKER_KEYRING" ]; then
+    curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" | sudo gpg --dearmor -o "$DOCKER_KEYRING"
+    sudo chmod a+r "$DOCKER_KEYRING"
+  fi
+  if [ ! -f "$DOCKER_LIST" ] || ! grep -q "download.docker.com/linux/ubuntu" "$DOCKER_LIST"; then
+    echo "deb [arch=${ARCH} signed-by=${DOCKER_KEYRING}] https://download.docker.com/linux/ubuntu ${OS_CODENAME} stable" | \
+      sudo tee "$DOCKER_LIST" >/dev/null
+  fi
+  ensure_apt_update
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  sudo systemctl enable --now docker
+  sudo usermod -aG docker "$TARGET_USER" || true
+else
+  log "Docker già installato"
+  # Assicura abilitazione servizio
+  sudo systemctl enable --now docker || true
+  sudo usermod -aG docker "$TARGET_USER" || true
+fi
 
-# 4) Installa Tailscale
-echo "[*] Installo Tailscale..."
-curl -fsSL "https://pkgs.tailscale.com/stable/ubuntu/${OS_CODENAME}.noarmor.gpg" | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-curl -fsSL "https://pkgs.tailscale.com/stable/ubuntu/${OS_CODENAME}.tailscale-keyring.list" | sudo tee /etc/apt/sources.list.d/tailscale.list >/dev/null
-sudo apt-get update -y
-sudo apt-get install -y tailscale
-sudo systemctl enable --now tailscaled
+# ---- 4) Tailscale repo + install (idempotent) ----
+TS_KEYRING="/usr/share/keyrings/tailscale-archive-keyring.gpg"
+TS_LIST="/etc/apt/sources.list.d/tailscale.list"
+if ! command -v tailscale >/dev/null 2>&1; then
+  log "Tailscale non presente: preparo repo e installo"
+  curl -fsSL "https://pkgs.tailscale.com/stable/ubuntu/${OS_CODENAME}.noarmor.gpg" | sudo tee "$TS_KEYRING" >/dev/null
+  curl -fsSL "https://pkgs.tailscale.com/stable/ubuntu/${OS_CODENAME}.tailscale-keyring.list" | sudo tee "$TS_LIST" >/dev/null
+  ensure_apt_update
+  sudo apt-get install -y tailscale
+  sudo systemctl enable --now tailscaled
+else
+  log "Tailscale già installato"
+  sudo systemctl enable --now tailscaled || true
+fi
 
-# 5) Utility scripts nella home dell’utente
-echo "[*] Creo utility scripts in $TARGET_HOME ..."
+# ---- 5) Utility scripts: overwrite to keep updated ----
+log "Creo/Aggiorno utility scripts in $TARGET_HOME"
+install_user_script() {
+  local path="$1"; shift
+  cat >"$path" <<'EOS'
+$CONTENT$
+EOS
+  sudo chown "$TARGET_USER:$TARGET_USER" "$path"
+  chmod +x "$path"
+}
+
+# upgrade.sh
 cat > "$TARGET_HOME/upgrade.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -63,6 +103,7 @@ else
 fi
 EOF
 
+# docker-prune.sh
 cat > "$TARGET_HOME/docker-prune.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -71,6 +112,7 @@ read -r -p "Prune tutto (y/N)? " ans
 [[ "${ans,,}" == "y" ]] && docker system prune -a --volumes
 EOF
 
+# sysinfo.sh
 cat > "$TARGET_HOME/sysinfo.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -84,6 +126,7 @@ echo "Docker:"
 command -v docker >/dev/null && docker --version || echo "Docker non installato"
 EOF
 
+# tailscale-up.sh
 cat > "$TARGET_HOME/tailscale-up.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -94,24 +137,27 @@ EOF
 sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh}
 chmod +x "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh}
 
-# 6) Altre operazioni utili per template
-echo "[*] Imposto logrotate di base e pulizia..."
-sudo apt-get install -y logrotate
-sudo logrotate -d /etc/logrotate.conf >/dev/null || true
+# ---- 6) Utilities: logrotate present ----
+if need_pkg logrotate; then
+  log "Installo logrotate"
+  sudo apt-get install -y logrotate
+else
+  log "logrotate già installato"
+fi
 
-# 7) Pulizia history e log di apt (per template pulito)
-echo "[*] Ripulisco tracce comando e cache..."
+# ---- 7) Cleanup: history and apt caches ----
+log "Pulizia tracce e cache"
 unset HISTFILE || true
 history -c || true
 rm -f "$TARGET_HOME/.bash_history" || true
 sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb || true
-sudo apt-get update -y >/dev/null
+sudo apt-get update -y >/dev/null || true
 
-# 8) Chiedi se cancellare questo script
-read -r -p "[?] Cancellare $(basename "$0") (y/N)? " ans
-if [[ "${ans,,}" == "y" ]]; then
+# ---- 8) Optionally self-remove ----
+read -r -p "[?] Cancellare $(basename "$0") (y/N)? " ans || true
+if [[ "${ans:-N}" =~ ^[Yy]$ ]]; then
   rm -- "$0" || true
-  echo "[*] Script rimosso."
+  log "Script rimosso"
 fi
 
-echo "[✓] Preparazione template completata. Logout e login per applicare il gruppo docker."
+log "Template pronto. Logout/login per gruppo docker."
