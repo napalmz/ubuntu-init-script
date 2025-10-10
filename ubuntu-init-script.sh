@@ -77,6 +77,18 @@ else
   sudo systemctl enable --now tailscaled || true
 fi
 
+# ---- 5b) Base packages: ensure essentials ----
+log "Verifico e installo pacchetti base"
+BASE_PACKAGES=(open-vm-tools curl wget vim htop net-tools unzip gnupg ca-certificates lsb-release software-properties-common)
+for pkg in "${BASE_PACKAGES[@]}"; do
+  if dpkg -s "$pkg" >/dev/null 2>&1; then
+    log "$pkg già installato"
+  else
+    log "Installo $pkg"
+    sudo apt-get install -y "$pkg"
+  fi
+done
+
 # ---- 5) Utility scripts: overwrite to keep updated ----
 log "Creo/Aggiorno utility scripts in $TARGET_HOME"
 install_user_script() {
