@@ -169,4 +169,18 @@ if [[ "${ans:-N}" =~ ^[Yy]$ ]]; then
   fi
 fi
 
+# ---- 9) Extra: pulizia history utente ----
+log "Pulizia completa history dell'utente $TARGET_USER"
+# shell history
+sudo -u "$TARGET_USER" bash -c 'history -c || true; : > ~/.bash_history || true; unset HISTFILE || true'
+# zsh
+sudo -u "$TARGET_USER" bash -c ': > ~/.zsh_history 2>/dev/null || true'
+# vari interpreti REPL
+sudo -u "$TARGET_USER" bash -c 'for f in ~/.python_history ~/.node_repl_history ~/.psql_history ~/.mysql_history ~/.sqlite_history ~/.lesshst ~/.nano_history ~/.viminfo ~/.wget-hsts; do [ -f "$f" ] && : > "$f"; done'
+# fish e altri
+sudo -u "$TARGET_USER" bash -c ': > ~/.local/share/fish/fish_history 2>/dev/null || true; : > ~/.local/share/recently-used.xbel 2>/dev/null || true'
+# journal user-level
+journalctl --user --rotate 2>/dev/null || true
+journalctl --user --vacuum-time=1s 2>/dev/null || true
+
 log "Template pronto. Logout/login per gruppo docker."
