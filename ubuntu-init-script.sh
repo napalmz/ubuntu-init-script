@@ -14,7 +14,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 # ---- Helpers ----
 need_pkg() { dpkg -s "$1" >/dev/null 2>&1 || return 0 && return 1; }
-file_has_line() { local f="$1"; local patt="$2"; [ -f "$f" ] && grep -Fxq "$patt" "$f"; }
+file_has_line() { local f="$1"; local patt="$2"; [ -f "$f" ] && sudo grep -Fxq "$patt" "$f"; }
 ensure_apt_update() { sudo apt-get update -y; }
 
 # ---- 1) Ensure sudo NOPASSWD for TARGET_USER ----
@@ -154,10 +154,19 @@ sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb || true
 sudo apt-get update -y >/dev/null || true
 
 # ---- 8) Optionally self-remove ----
-read -r -p "[?] Cancellare $(basename "$0") (y/N)? " ans || true
+# Determina il percorso sorgente in modo affidabile.
+SCRIPT_SRC="${BASH_SOURCE[0]:-$0}"
+read -r -p "[?] Cancellare $(basename "$SCRIPT_SRC") (y/N)? " ans || true
 if [[ "${ans:-N}" =~ ^[Yy]$ ]]; then
-  rm -- "$0" || true
-  log "Script rimosso"
+  # Se eseguito via process substitution (/dev/fd/* o /proc/*), non provare a rimuovere.
+  if [[ "$SCRIPT_SRC" =~ ^/dev/fd/ || "$SCRIPT_SRC" =~ ^/proc/ ]]; then
+    log "Esecuzione da stream (\"$SCRIPT_SRC\"). Salto auto-rimozione."
+  elif [ -f "$SCRIPT_SRC" ]; then
+    rm -- "$SCRIPT_SRC" || true
+    log "Script rimosso"
+  else
+    log "Percorso script non rimovibile: $SCRIPT_SRC"
+  fi
 fi
 
 log "Template pronto. Logout/login per gruppo docker."
