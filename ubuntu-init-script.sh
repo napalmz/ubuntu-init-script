@@ -67,11 +67,11 @@ fi
 # ---- 2d) DHCP: usa MAC come client-id (netplan/dhclient) ----
 log "Forzo DHCP client-id = MAC"
 changed=0
-if ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
+if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
   for f in /etc/netplan/*.y*ml; do
     [ -f "$f" ] || continue
-    if grep -Eq '^\s*dhcp4:\s*true\s*$' "$f"; then
-      if ! grep -Eq '^\s*dhcp-identifier:\s*mac\s*$' "$f"; then
+    if sudo grep -Eq '^\s*dhcp4:\s*true\s*$' "$f"; then
+      if ! sudo grep -Eq '^\s*dhcp-identifier:\s*mac\s*$' "$f"; then
         log "Aggiorno netplan: $f -> dhcp-identifier: mac"
         sudo cp "$f" "$f.bak.$(date +%s)"
         sudo awk '
