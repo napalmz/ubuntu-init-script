@@ -29,12 +29,94 @@ else
   log "Sudoers già configurato"
 fi
 
+
+
 # ---- 2) System upgrade (safe) ----
 log "Aggiornamento sistema"
 sudo apt-get update -y
 sudo apt-get -o Dpkg::Options::="--force-confnew" \
   -o Dpkg::Options::="--force-confdef" -y --with-new-pkgs upgrade || true
 sudo apt-get -y autoremove || true
+
+#
+# ---- 2c) Hostname: opzionale con prompt ----
+current_hn="$(hostname)"
+read -r -p "[?] Vuoi cambiare l'hostname (attuale: ${current_hn}) (y/N)? " ans || true
+if [[ "${ans,,}" == "y" ]]; then
+  read -r -p "Nuovo hostname (FQDN o semplice, es. myhost o vm01.lab): " NEW_HN
+  # Validazione semplice RFC 1123
+  if [[ -z "$NEW_HN" ]] || ! [[ "$NEW_HN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+    log "Hostname non valido. Salto modifica."
+  else
+    log "Imposto hostname a $NEW_HN"
+    sudo hostnamectl set-hostname "$NEW_HN" || true
+    # Aggiorna /etc/hosts per 127.0.1.1 -> short hostname
+    SHORT_HN="${NEW_HN%%.*}"
+    if [ -f /etc/hosts ]; then
+      sudo cp /etc/hosts "/etc/hosts.bak.$(date +%s)"
+      if grep -qE '^127\.0\.1\.1\b' /etc/hosts; then
+        sudo sed -i "s/^127\\.0\\.1\\.1.*/127.0.1.1\t${SHORT_HN}/" /etc/hosts
+      else
+        echo -e "127.0.1.1\t${SHORT_HN}" | sudo tee -a /etc/hosts >/dev/null
+      fi
+    fi
+    log "Hostname aggiornato runtime e in modo persistente."
+  fi
+fi
+
+# ---- 2d) DHCP: usa MAC come client-id (netplan/dhclient) ----
+log "Forzo DHCP client-id = MAC"
+changed=0
+if ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
+  for f in /etc/netplan/*.y*ml; do
+    [ -f "$f" ] || continue
+    if grep -Eq '^\s*dhcp4:\s*true\s*$' "$f"; then
+      if ! grep -Eq '^\s*dhcp-identifier:\s*mac\s*$' "$f"; then
+        log "Aggiorno netplan: $f -> dhcp-identifier: mac"
+        sudo cp "$f" "$f.bak.$(date +%s)"
+        sudo awk '
+          {
+            print $0;
+            if ($0 ~ /(^|[[:space:]])dhcp4:[[:space:]]*true[[:space:]]*$/) {
+              match($0, /^[[:space:]]*/); ind=substr($0, RSTART, RLENGTH);
+              print ind "dhcp-identifier: mac";
+            }
+          }
+        ' "$f" > "$f.tmp"
+        sudo mv "$f.tmp" "$f"
+        changed=1
+      else
+        log "Netplan già configurato in $f"
+      fi
+    fi
+  done
+  if [ "$changed" = "1" ]; then
+    log "Applico netplan"
+    sudo netplan apply || true
+  fi
+else
+  log "Netplan non trovato. Verifico dhclient"
+fi
+
+# Fallback per dhclient: usa MAC come client-id
+if [ -d /etc/dhcp ]; then
+  DHCLIENT_CONF=/etc/dhcp/dhclient.conf
+  if [ -f "$DHCLIENT_CONF" ] && grep -Eq 'dhcp-client-identifier' "$DHCLIENT_CONF"; then
+    log "dhclient.conf ha già una direttiva client-id"
+  else
+    log "Configuro dhclient per usare hardware (MAC) come client-id"
+    sudo install -m 0644 /dev/null "$DHCLIENT_CONF" 2>/dev/null || true
+    sudo cp "$DHCLIENT_CONF" "$DHCLIENT_CONF.bak.$(date +%s)" 2>/dev/null || true
+    sudo bash -c "cat >> '$DHCLIENT_CONF'" <<'EOF'
+# Imposta il client-id al MAC address (RFC 2132 option 61)
+send dhcp-client-identifier = hardware;
+EOF
+  fi
+fi
+
+# ---- 2b) Imposta timezone ----
+log "Imposto timezone Europe/Rome"
+sudo timedatectl set-timezone Europe/Rome || true
 
 # ---- 3) Docker CE repo + install (idempotent) ----
 DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
