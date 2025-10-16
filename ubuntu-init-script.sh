@@ -87,6 +87,47 @@ if [[ "${ans,,}" == "y" ]]; then
   fi
 fi
 
+# ---- 2e) Post-clone sysprep: opzionale ----
+read -r -p "[?] Eseguire post-clone sysprep (rigenera machine-id, chiavi SSH, pulisce DHCP lease)? (y/N) " ans_sysprep || true
+if [[ "${ans_sysprep,,}" == "y" ]]; then
+  log "Rigenero SSH host keys"
+  sudo systemctl stop ssh 2>/dev/null || true
+  sudo rm -f /etc/ssh/ssh_host_*key* || true
+  sudo ssh-keygen -A
+  sudo systemctl start ssh 2>/dev/null || true
+
+  log "Rigenero machine-id"
+  # Svuota e rigenera machine-id (necessario per unicità host)
+  sudo truncate -s 0 /etc/machine-id || true
+  sudo rm -f /var/lib/dbus/machine-id || true
+  sudo systemd-machine-id-setup || true
+
+  # Se presente cloud-init, pulisce stato e rigenera machine-id lato cloud-init
+  if command -v cloud-init >/dev/null 2>&1; then
+    log "Pulizia cloud-init"
+    sudo cloud-init clean --logs --machine-id || true
+  fi
+
+  log "Pulisce lease DHCP"
+  sudo rm -f /var/lib/dhcp/* /var/lib/NetworkManager/*lease* 2>/dev/null || true
+
+  log "Reset random-seed"
+  sudo systemd-random-seed --reset 2>/dev/null || true
+
+  # Opzionale: reset Tailscale per evitare conflitti di identity su cloni
+  if command -v tailscale >/dev/null 2>&1; then
+    read -r -p "[?] Resettare l'identità Tailscale su questo clone (y/N)? " ans_ts || true
+    if [[ "${ans_ts,,}" == "y" ]]; then
+      log "Reset Tailscale"
+      sudo systemctl stop tailscaled || true
+      sudo tailscale logout 2>/dev/null || true
+      sudo rm -f /var/lib/tailscale/tailscaled.state || true
+      sudo systemctl start tailscaled || true
+      echo "[nota] Esegui 'tailscale up --ssh' per riautenticare questo nodo."
+    fi
+  fi
+fi
+
 # ---- 2d) DHCP: usa MAC come client-id (netplan/dhclient) ----
 log "Forzo DHCP client-id = MAC"
 changed=0
