@@ -230,8 +230,44 @@ echo "Esegui login su Tailscale..."
 sudo tailscale up --ssh
 EOF
 
-sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh}
-chmod +x "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh}
+# docker-portainer-agent-update.sh
+cat > "$TARGET_HOME/docker-portainer-agent-update.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Uso: ./docker-portainer-agent-update.sh [AGENT_SECRET]
+# Se non passato come argomento, legge la variabile d'ambiente AGENT_SECRET, altrimenti chiede in input.
+SECRET="${1:-${AGENT_SECRET:-}}"
+if [[ -z "$SECRET" ]]; then
+  read -r -p "AGENT_SECRET: " SECRET || true
+fi
+if [[ -z "$SECRET" ]]; then
+  echo "Errore: AGENT_SECRET mancante" >&2
+  exit 1
+fi
+
+echo "[portainer-agent] pull latest"
+sudo docker pull portainer/agent:latest
+
+if sudo docker ps -a --format '{{.Names}}' | grep -Fxq portainer_agent; then
+  echo "[portainer-agent] stop+rm container esistente"
+  sudo docker stop portainer_agent || true
+  sudo docker rm portainer_agent || true
+fi
+
+echo "[portainer-agent] run container"
+sudo docker run --name portainer_agent --restart=always -d \
+  -p 9001:9001 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/docker/volumes:/var/lib/docker/volumes \
+  -e AGENT_SECRET="$SECRET" \
+  portainer/agent:latest
+
+echo "[portainer-agent] ok"
+EOF
+
+sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh,docker-portainer-agent-update.sh}
+chmod +x "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh,docker-portainer-agent-update.sh}
 
 # ---- 6) Utilities: logrotate present ----
 if need_pkg logrotate; then
