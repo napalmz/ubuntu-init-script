@@ -244,14 +244,18 @@ if [ -f "$SECRET_FILE" ]; then
   # shellcheck disable=SC1090
   . "$SECRET_FILE"
   SAVED_SECRET="${AGENT_SECRET:-}"
+  # Evita che AGENT_SECRET influenzi la scelta automatica
+  unset AGENT_SECRET || true
 fi
 
-# Precedenze: argomento > env AGENT_SECRET > secret salvato > prompt
-SECRET="${1:-${AGENT_SECRET:-}}"
+# Precedenze: argomento > prompt con default del secret salvato (se esiste)
+SECRET="${1:-}"
 if [[ -z "${SECRET}" && -n "${SAVED_SECRET}" ]]; then
-  read -r -p "AGENT_SECRET [Enter per riutilizzare quello salvato]: " INPUT || true
+  echo "[portainer-agent] secret salvato trovato in $SECRET_FILE"
+  read -r -p "AGENT_SECRET [Invio per riutilizzare quello salvato]: " INPUT || true
   if [[ -z "${INPUT}" ]]; then
     SECRET="$SAVED_SECRET"
+    echo "[portainer-agent] uso secret salvato"
   else
     SECRET="$INPUT"
   fi
