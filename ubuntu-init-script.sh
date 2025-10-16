@@ -227,7 +227,7 @@ fi
 
 # ---- 5b) Base packages: ensure essentials ----
 log "Verifico e installo pacchetti base"
-BASE_PACKAGES=(open-vm-tools curl wget vim htop net-tools unzip gnupg ca-certificates lsb-release software-properties-common iputils-ping)
+BASE_PACKAGES=(open-vm-tools curl wget vim htop net-tools dnsutils unzip gnupg ca-certificates lsb-release software-properties-common iputils-ping)
 for pkg in "${BASE_PACKAGES[@]}"; do
   if dpkg -s "$pkg" >/dev/null 2>&1; then
     log "$pkg già installato"
