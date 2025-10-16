@@ -25,8 +25,16 @@ if ! file_has_line "$SUDOERS_DROP" "$NOPASSWD_LINE"; then
   echo "$NOPASSWD_LINE" | sudo tee "$SUDOERS_DROP" >/dev/null
   sudo chmod 440 "$SUDOERS_DROP"
   sudo visudo -cf "$SUDOERS_DROP" >/dev/null
+
 else
   log "Sudoers già configurato"
+fi
+
+# ---- 1b) Password utente: opzionale con prompt ----
+read -r -p "[?] Vuoi cambiare la password per $TARGET_USER (y/N)? " ans_pw || true
+if [[ "${ans_pw,,}" == "y" ]]; then
+  log "Cambio password per $TARGET_USER"
+  sudo passwd "$TARGET_USER"
 fi
 
 #
