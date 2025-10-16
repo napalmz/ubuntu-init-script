@@ -74,8 +74,9 @@ if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
       if ! sudo grep -Eq '^\s*dhcp-identifier:\s*mac\s*$' "$f"; then
         log "Aggiorno netplan: $f -> dhcp-identifier: mac"
         sudo cp "$f" "$f.bak.$(date +%s)"
-        tmpfile="$(mktemp)"
-        awk '
+        tmpfile="$(sudo mktemp /etc/netplan/.netplanXXXX.yaml)"
+        # Legge con sudo e scrive con sudo per evitare problemi di permessi
+        sudo awk '
           {
             print $0;
             if ($0 ~ /(^|[[:space:]])dhcp4:[[:space:]]*true[[:space:]]*$/) {
