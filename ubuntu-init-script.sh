@@ -29,14 +29,29 @@ else
   log "Sudoers già configurato"
 fi
 
-
-
-# ---- 2) System upgrade (safe) ----
-log "Aggiornamento sistema"
-sudo apt-get update -y
-sudo apt-get -o Dpkg::Options::="--force-confnew" \
-  -o Dpkg::Options::="--force-confdef" -y --with-new-pkgs upgrade || true
-sudo apt-get -y autoremove || true
+#
+# ---- 2) System upgrade (opzionale) ----
+read -r -p "[?] Eseguire aggiornamento del sistema ora (y/N)? " ans_up || true
+if [[ "${ans_up,,}" == "y" ]]; then
+  UPGRADE_QUIET="${INIT_UPGRADE_QUIET:-0}"
+  LOGFILE="/var/log/ubuntu-init-upgrade.log"
+  if [[ "$UPGRADE_QUIET" == "1" ]]; then
+    log "Aggiornamento sistema in modalità quiet. Log: $LOGFILE"
+    sudo bash -c "\
+      apt-get update -y -qq && \
+      apt-get -o Dpkg::Options::='--force-confnew' -o Dpkg::Options::='--force-confdef' \
+              -o Dpkg::Use-Pty=0 -y --with-new-pkgs -qq upgrade && \
+      apt-get -y -qq autoremove" >"$LOGFILE" 2>&1 || true
+  else
+    log "Aggiornamento sistema"
+    sudo apt-get update -y
+    sudo apt-get -o Dpkg::Options::="--force-confnew" \
+      -o Dpkg::Options::="--force-confdef" -y --with-new-pkgs upgrade || true
+    sudo apt-get -y autoremove || true
+  fi
+else
+  log "Aggiornamento sistema saltato"
+fi
 
 #
 # ---- 2c) Hostname: opzionale con prompt ----
