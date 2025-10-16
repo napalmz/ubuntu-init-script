@@ -236,15 +236,37 @@ cat > "$TARGET_HOME/docker-portainer-agent-update.sh" <<'EOF'
 set -euo pipefail
 
 # Uso: ./docker-portainer-agent-update.sh [AGENT_SECRET]
-# Se non passato come argomento, legge la variabile d'ambiente AGENT_SECRET, altrimenti chiede in input.
+# Persistenza del secret: $HOME/.config/portainer/agent.env
+SECRET_FILE="$HOME/.config/portainer/agent.env"
+mkdir -p "$(dirname "$SECRET_FILE")"
+SAVED_SECRET=""
+if [ -f "$SECRET_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$SECRET_FILE"
+  SAVED_SECRET="${AGENT_SECRET:-}"
+fi
+
+# Precedenze: argomento > env AGENT_SECRET > secret salvato > prompt
 SECRET="${1:-${AGENT_SECRET:-}}"
-if [[ -z "$SECRET" ]]; then
+if [[ -z "${SECRET}" && -n "${SAVED_SECRET}" ]]; then
+  read -r -p "AGENT_SECRET [Enter per riutilizzare quello salvato]: " INPUT || true
+  if [[ -z "${INPUT}" ]]; then
+    SECRET="$SAVED_SECRET"
+  else
+    SECRET="$INPUT"
+  fi
+elif [[ -z "${SECRET}" ]]; then
   read -r -p "AGENT_SECRET: " SECRET || true
 fi
-if [[ -z "$SECRET" ]]; then
+
+if [[ -z "${SECRET}" ]]; then
   echo "Errore: AGENT_SECRET mancante" >&2
   exit 1
 fi
+
+# Salva/aggiorna secret in chiaro con permessi restrittivi
+printf 'AGENT_SECRET=%s\n' "$SECRET" >"$SECRET_FILE"
+chmod 600 "$SECRET_FILE"
 
 echo "[portainer-agent] pull latest"
 sudo docker pull portainer/agent:latest
