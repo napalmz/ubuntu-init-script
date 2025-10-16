@@ -74,7 +74,8 @@ if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
       if ! sudo grep -Eq '^\s*dhcp-identifier:\s*mac\s*$' "$f"; then
         log "Aggiorno netplan: $f -> dhcp-identifier: mac"
         sudo cp "$f" "$f.bak.$(date +%s)"
-        sudo awk '
+        tmpfile="$(mktemp)"
+        awk '
           {
             print $0;
             if ($0 ~ /(^|[[:space:]])dhcp4:[[:space:]]*true[[:space:]]*$/) {
@@ -82,8 +83,8 @@ if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
               print ind "dhcp-identifier: mac";
             }
           }
-        ' "$f" > "$f.tmp"
-        sudo mv "$f.tmp" "$f"
+        ' "$f" | sudo tee "$tmpfile" >/dev/null
+        sudo mv "$tmpfile" "$f"
         changed=1
       else
         log "Netplan già configurato in $f"
