@@ -405,8 +405,6 @@ sudo -u "$TARGET_USER" bash -c ': > ~/.local/share/fish/fish_history 2>/dev/null
 journalctl --user --rotate 2>/dev/null || true
 journalctl --user --vacuum-time=1s 2>/dev/null || true
 
-log "Template pronto. Logout/login per gruppo docker."
-
 # ---- 10) Opzionale: riavvio macchina ----
 read -r -p "[?] Riavviare ora la macchina (y/N)? " ans_reboot || true
 if [[ "${ans_reboot,,}" == "y" ]]; then
@@ -415,3 +413,5 @@ if [[ "${ans_reboot,,}" == "y" ]]; then
 else
   log "Riavvio saltato. Esegui 'sudo reboot now' manualmente se necessario."
 fi
+
+log "Template pronto. Logout/login per gruppo docker."
