@@ -436,43 +436,59 @@ rm -f "$TARGET_HOME/.bash_history" || true
 sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb || true
 sudo apt-get update -y >/dev/null || true
 
-# ---- 8) Optionally self-remove ----
+# ---- 8) Azione finale: Reboot / Cancella / Cancella+Reboot / Nulla ----
 # Determina il percorso sorgente in modo affidabile.
 SCRIPT_SRC="${BASH_SOURCE[0]:-$0}"
-read -r -p "[?] Cancellare $(basename "$SCRIPT_SRC") (y/N)? " ans || true
-if [[ "${ans:-N}" =~ ^[Yy]$ ]]; then
-  # Se eseguito via process substitution (/dev/fd/* o /proc/*), non provare a rimuovere.
-  if [[ "$SCRIPT_SRC" =~ ^/dev/fd/ || "$SCRIPT_SRC" =~ ^/proc/ ]]; then
-    log "Esecuzione da stream (\"$SCRIPT_SRC\"). Salto auto-rimozione."
-  elif [ -f "$SCRIPT_SRC" ]; then
-    rm -- "$SCRIPT_SRC" || true
-    log "Script rimosso"
-  else
-    log "Percorso script non rimovibile: $SCRIPT_SRC"
-  fi
-fi
 
-# ---- 9) Extra: pulizia history utente ----
-log "Pulizia completa history dell'utente $TARGET_USER"
-# shell history
-sudo -u "$TARGET_USER" bash -c 'history -c || true; : > ~/.bash_history || true; unset HISTFILE || true'
-# zsh
-sudo -u "$TARGET_USER" bash -c ': > ~/.zsh_history 2>/dev/null || true'
-# vari interpreti REPL
-sudo -u "$TARGET_USER" bash -c 'for f in ~/.python_history ~/.node_repl_history ~/.psql_history ~/.mysql_history ~/.sqlite_history ~/.lesshst ~/.nano_history ~/.viminfo ~/.wget-hsts; do [ -f "$f" ] && : > "$f"; done'
-# fish e altri
-sudo -u "$TARGET_USER" bash -c ': > ~/.local/share/fish/fish_history 2>/dev/null || true; : > ~/.local/share/recently-used.xbel 2>/dev/null || true'
-# journal user-level
-journalctl --user --rotate 2>/dev/null || true
-journalctl --user --vacuum-time=1s 2>/dev/null || true
-
-# ---- 10) Opzionale: riavvio macchina ----
-read -r -p "[?] Riavviare ora la macchina (y/N)? " ans_reboot || true
-if [[ "${ans_reboot,,}" == "y" ]]; then
-  log "Riavvio sistema in corso..."
-  sudo reboot now
-else
-  log "Riavvio saltato. Esegui 'sudo reboot now' manualmente se necessario."
-fi
+cat <<'EOM'
+[?] Azione finale:
+  1) Riavvia ora
+  2) Cancella questo script
+  3) Cancella questo script e riavvia
+  N) Nessuna azione
+EOM
+read -r -p "Seleziona [1/2/3/N]: " final_choice || true
+case "${final_choice,,}" in
+  1)
+    log "Programmo riavvio tra 5 secondi"
+    # Usa systemd-run per dare tempo al processo di terminare e flushare I/O
+    if command -v systemd-run >/dev/null 2>&1; then
+      sudo systemd-run --on-active=5s --unit=ubuntu-init-reboot /sbin/reboot >/dev/null 2>&1 || sudo systemd-run --on-active=5s /sbin/reboot || sudo shutdown -r +1
+    else
+      sudo shutdown -r +1
+    fi
+    ;;
+  2)
+    # Autocancellazione sicura (gestisce anche esecuzione da stream)
+    if [[ "$SCRIPT_SRC" =~ ^/dev/fd/ || "$SCRIPT_SRC" =~ ^/proc/ ]]; then
+      log "Esecuzione da stream (\"$SCRIPT_SRC\"). Salto auto-rimozione."
+    elif [ -f "$SCRIPT_SRC" ]; then
+      rm -- "$SCRIPT_SRC" || true
+      log "Script rimosso"
+    else
+      log "Percorso script non rimovibile: $SCRIPT_SRC"
+    fi
+    ;;
+  3)
+    # Cancella e poi riavvia con un piccolo delay
+    if [[ "$SCRIPT_SRC" =~ ^/dev/fd/ || "$SCRIPT_SRC" =~ ^/proc/ ]]; then
+      log "Esecuzione da stream (\"$SCRIPT_SRC\"). Salto auto-rimozione."
+    elif [ -f "$SCRIPT_SRC" ]; then
+      rm -- "$SCRIPT_SRC" || true
+      log "Script rimosso"
+    else
+      log "Percorso script non rimovibile: $SCRIPT_SRC"
+    fi
+    log "Programmo riavvio tra 5 secondi"
+    if command -v systemd-run >/dev/null 2>&1; then
+      sudo systemd-run --on-active=5s --unit=ubuntu-init-reboot /sbin/reboot >/dev/null 2>&1 || sudo systemd-run --on-active=5s /sbin/reboot || sudo shutdown -r +1
+    else
+      sudo shutdown -r +1
+    fi
+    ;;
+  *)
+    log "Nessuna azione finale selezionata"
+    ;;
+esac
 
 log "Template pronto. Logout/login per gruppo docker."
