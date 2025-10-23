@@ -7,9 +7,9 @@ TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 OS_CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
 ARCH="$(dpkg --print-architecture)"
 
+# Funzioni di utilità
 log() { echo "[ubuntu-init] $*"; }
-
-log "User: $TARGET_USER  Home: $TARGET_HOME  Codename: $OS_CODENAME  Arch: $ARCH"
+print_kv() { printf "[ubuntu-init] %-10s %s\n" "$1" "$2"; }
 
 # ---- GitHub version info (repo + commit) ----
 # Configurabile via env: INIT_REPO_OWNER, INIT_REPO_NAME, INIT_BRANCH, INIT_SCRIPT_PATH
@@ -19,7 +19,7 @@ BRANCH="${INIT_BRANCH:-main}"
 SCRIPT_PATH="${INIT_SCRIPT_PATH:-ubuntu-init-script.sh}"
 SCRIPT_SRC="${BASH_SOURCE[0]:-$0}"
 
-print_kv() { printf "[ubuntu-init] %-10s %s\n" "$1" "$2"; }
+log "User: $TARGET_USER  Home: $TARGET_HOME  Codename: $OS_CODENAME  Arch: $ARCH  Script: $SCRIPT_SRC"
 
 version_check() {
   # Calcola hash locale dello script in esecuzione
@@ -438,8 +438,7 @@ sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb || true
 sudo apt-get update -y >/dev/null || true
 
 # ---- 8) Azione finale: Reboot / Cancella / Cancella+Reboot / Nulla ----
-# Determina il percorso sorgente in modo affidabile.
-SCRIPT_SRC="${BASH_SOURCE[0]:-$0}"
+SCRIPT_SRC="${BASH_SOURCE[0]:-$0}" # Determina il percorso sorgente in modo affidabile.
 
 cat <<'EOM'
 [?] Azione finale:
