@@ -10,6 +10,67 @@ ARCH="$(dpkg --print-architecture)"
 log() { echo "[ubuntu-init] $*"; }
 
 log "User: $TARGET_USER  Home: $TARGET_HOME  Codename: $OS_CODENAME  Arch: $ARCH"
+
+# ---- GitHub version info (repo + commit) ----
+# Configurabile via env: INIT_REPO_OWNER, INIT_REPO_NAME, INIT_BRANCH, INIT_SCRIPT_PATH
+REPO_OWNER="${INIT_REPO_OWNER:-napalmz}"
+REPO_NAME="${INIT_REPO_NAME:-ubuntu-init-script}"
+BRANCH="${INIT_BRANCH:-main}"
+SCRIPT_PATH="${INIT_SCRIPT_PATH:-ubuntu-init-script.sh}"
+SCRIPT_SRC="${BASH_SOURCE[0]:-$0}"
+
+print_kv() { printf "[ubuntu-init] %-10s %s\n" "$1" "$2"; }
+
+version_check() {
+  # Calcola hash locale dello script in esecuzione
+  local local_hash
+  if [ -r "$SCRIPT_SRC" ]; then
+    local_hash="$(sha256sum "$SCRIPT_SRC" 2>/dev/null | awk '{print $1}')"
+  else
+    # prova a leggere dallo stdin della shell corrente se stream
+    local_hash="unknown"
+  fi
+
+  local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits?path=${SCRIPT_PATH}&sha=${BRANCH}&per_page=1"
+  local latest_sha latest_date
+  # Scarica commit più recente per quel file e branch
+  local meta
+  meta="$(curl -fsSL --retry 3 --retry-connrefused "$api" 2>/dev/null || true)"
+  if [ -n "$meta" ]; then
+    latest_sha="$(printf '%s' "$meta" | sed -n 's/^[[:space:]]*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{7,\}\)".*/\1/p' | head -n1)"
+    latest_date="$(printf '%s' "$meta" | sed -n 's/^[[:space:]]*"date"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)"
+  fi
+
+  if [ -z "$latest_sha" ]; then
+    print_kv "Versione" "impossibile contattare GitHub"
+    [ "$local_hash" != "unknown" ] && print_kv "SHA locale" "$local_hash"
+    return 0
+  fi
+
+  # Confronta contenuto locale con il file alla latest SHA
+  local raw_latest="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${latest_sha}/${SCRIPT_PATH}"
+  local tmp="$(mktemp)" || true
+  if curl -fsSL --retry 3 --retry-connrefused "$raw_latest" -o "$tmp" 2>/dev/null; then
+    local remote_hash
+    remote_hash="$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')"
+    rm -f "$tmp"
+    print_kv "Git SHA" "$latest_sha"
+    [ -n "$latest_date" ] && print_kv "Git date" "$latest_date"
+    if [ "$local_hash" = "$remote_hash" ]; then
+      print_kv "Script" "allineato al commit più recente"
+    else
+      print_kv "Script" "differente dal commit più recente (cache/vecchia copia?)"
+      [ "$local_hash" != "unknown" ] && print_kv "SHA locale" "$local_hash"
+      print_kv "SHA latest" "$remote_hash"
+    fi
+  else
+    print_kv "Git SHA" "$latest_sha"
+    [ -n "$latest_date" ] && print_kv "Git date" "$latest_date"
+    print_kv "Confronto" "impossibile scaricare raw@latest"
+  fi
+}
+
+version_check || true
 export DEBIAN_FRONTEND=noninteractive
 
 # ---- Helpers ----
