@@ -32,13 +32,14 @@ version_check() {
   fi
 
   local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits?path=${SCRIPT_PATH}&sha=${BRANCH}&per_page=1"
-  local latest_sha latest_date
+  local latest_sha latest_date local_date
   # Scarica commit più recente per quel file e branch
   local meta
   meta="$(curl -fsSL --retry 3 --retry-connrefused "$api" 2>/dev/null || true)"
   if [ -n "$meta" ]; then
     latest_sha="$(printf '%s' "$meta" | sed -n 's/^[[:space:]]*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{7,\}\)".*/\1/p' | head -n1)"
-    latest_date="$(printf '%s' "$meta" | sed -n 's/^[[:space:]]*"date"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' | head -n1)"
+    latest_date="$(printf '%s' "$meta" | sed -n 's/^[[:space:]]*"date"[[:space:]]*:[[:space:]]*"\([^"\+]\+\)".*/\1/p' | head -n1)"
+    local_date="$(date -d "$latest_date" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || printf '%s' "$latest_date")"
   fi
 
   if [ -z "$latest_sha" ]; then
@@ -55,7 +56,7 @@ version_check() {
     remote_hash="$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')"
     rm -f "$tmp"
     print_kv "Git SHA" "$latest_sha"
-    [ -n "$latest_date" ] && print_kv "Git date" "$latest_date"
+    [ -n "$local_date" ] && print_kv "Git date" "$local_date"
     if [ "$local_hash" = "$remote_hash" ]; then
       print_kv "Script" "allineato al commit più recente"
     else
@@ -65,7 +66,7 @@ version_check() {
     fi
   else
     print_kv "Git SHA" "$latest_sha"
-    [ -n "$latest_date" ] && print_kv "Git date" "$latest_date"
+    [ -n "$local_date" ] && print_kv "Git date" "$local_date"
     print_kv "Confronto" "impossibile scaricare raw@latest"
   fi
 }
