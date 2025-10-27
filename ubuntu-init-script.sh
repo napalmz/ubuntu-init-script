@@ -79,6 +79,56 @@ need_pkg() { dpkg -s "$1" >/dev/null 2>&1 || return 0 && return 1; }
 file_has_line() { local f="$1"; local patt="$2"; [ -f "$f" ] && sudo grep -Fxq "$patt" "$f"; }
 ensure_apt_update() { sudo apt-get update -y; }
 
+# ---- duf helpers (GitHub releases) ----
+duf_arch_asset() {
+  local a
+  a="$(dpkg --print-architecture 2>/dev/null || true)"
+  case "$a" in
+    amd64)  echo "linux_amd64" ;;
+    arm64)  echo "linux_arm64" ;;
+    armhf)  echo "linux_armv7" ;;
+    *) log "Architettura non supportata per duf: $a"; return 1 ;;
+  esac
+}
+
+duf_remote_version() {
+  curl -fsSL "https://api.github.com/repos/muesli/duf/releases/latest" \
+    | grep -Po '"tag_name":\s*"v\K[0-9.]+' || true
+}
+
+duf_local_version() {
+  command -v duf >/dev/null 2>&1 || return 1
+  duf -version 2>/dev/null | grep -Po '[0-9]+(\.[0-9]+)+' || true
+}
+
+duf_install_version() {
+  local ver="$1" asset fname url
+  asset="$(duf_arch_asset)" || return 1
+  fname="/tmp/duf_${ver}_${asset}.deb"
+  url="https://github.com/muesli/duf/releases/download/v${ver}/duf_${ver}_${asset}.deb"
+  log "Scarico duf $ver per $asset"
+  curl -fL -o "$fname" "$url"
+  sudo apt-get install -y "$fname"
+  rm -f "$fname"
+}
+
+compare_versions() {
+  # Ritorna: LT, GT, EQ
+  if command -v dpkg >/dev/null 2>&1; then
+    if dpkg --compare-versions "$1" lt "$2"; then echo LT
+    elif dpkg --compare-versions "$1" gt "$2"; then echo GT
+    else echo EQ; fi
+  else
+    local first last
+    first="$(printf "%s\n%s\n" "$1" "$2" | sort -V | head -n1)"
+    last="$(printf "%s\n%s\n" "$1" "$2" | sort -V | tail -n1)"
+    if [ "$1" = "$2" ]; then echo EQ
+    elif [ "$1" = "$first" ]; then echo LT
+    else echo GT
+    fi
+  fi
+}
+
 # ---- 1) Ensure sudo NOPASSWD for TARGET_USER ----
 SUDOERS_DROP="/etc/sudoers.d/90-$TARGET_USER-nopasswd"
 NOPASSWD_LINE="$TARGET_USER ALL=(ALL) NOPASSWD:ALL"
@@ -287,6 +337,7 @@ else
   sudo systemctl enable --now tailscaled || true
 fi
 
+
 # ---- 5b) Base packages: ensure essentials ----
 log "Verifico e installo pacchetti base"
 BASE_PACKAGES=(open-vm-tools curl wget vim htop net-tools dnsutils unzip gnupg ca-certificates lsb-release software-properties-common iputils-ping jq)
@@ -298,6 +349,38 @@ for pkg in "${BASE_PACKAGES[@]}"; do
     sudo apt-get install -y "$pkg"
   fi
 done
+
+# ---- 5c) duf: install/update from GitHub releases ----
+{
+  rver="$(duf_remote_version)"
+  if [ -z "$rver" ]; then
+    log "Impossibile determinare la versione remota di duf. Salto."
+  else
+    if lver="$(duf_local_version)"; then
+      cmp="$(compare_versions "$lver" "$rver")"
+      case "$cmp" in
+        EQ)
+          log "duf è già aggiornato: $lver"
+          ;;
+        LT)
+          log "Aggiorno duf: $lver → $rver"
+          duf_install_version "$rver" || log "Aggiornamento duf fallito"
+          ;;
+        GT)
+          log "Versione locale duf ($lver) più recente della remota ($rver)"
+          read -r -p "[?] Reinstallare la versione remota $rver? [y/N] " yn || true
+          case "${yn:-N}" in
+            y|Y) duf_install_version "$rver" || log "Installazione duf fallita" ;;
+            *)   log "Mantengo la versione locale di duf ($lver)" ;;
+          esac
+          ;;
+      esac
+    else
+      log "duf non è installato. Installo $rver"
+      duf_install_version "$rver" || log "Installazione duf fallita"
+    fi
+  fi
+}
 
 # ---- 5) Utility scripts: overwrite to keep updated ----
 log "Creo/Aggiorno utility scripts in $TARGET_HOME"
