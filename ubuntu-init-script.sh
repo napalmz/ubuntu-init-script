@@ -403,6 +403,10 @@ sudo apt -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confde
 sudo apt -y autoremove
 if [ -f /var/run/reboot-required ]; then
   echo -e "[*** Hello $USER, you \033[1mMUST REBOOT\033[0m your machine ***]"
+  if [ -f /var/run/reboot-required.pkgs ]; then
+    echo "Packages requiring reboot:"
+    cat /var/run/reboot-required.pkgs
+  fi
 else
   echo "[*** Hello $USER, no reboot needed ***]"
 fi
