@@ -241,62 +241,100 @@ if [[ "${ans_sysprep,,}" == "y" ]]; then
   fi
 fi
 
-# ---- 2d) DHCP: usa MAC come client-id (netplan/dhclient) ----
-log "Forzo DHCP client-id = MAC"
-changed=0
+# ---- 2d) Netplan: crea/gestisce config DHCP o IP statico ----
+log "Gestione configurazione rete (Netplan)"
+
+default_iface="$(ip -o route show to default 2>/dev/null | awk '{print $5; exit}')"
+[ -z "$default_iface" ] && default_iface="$(ip -o -4 addr show up scope global 2>/dev/null | awk '{print $2; exit}')"
+[ -z "$default_iface" ] && default_iface="eth0"
+
+default_cidr="$(ip -o -4 addr show dev "$default_iface" scope global 2>/dev/null | awk '{print $4; exit}')"
+default_gw="$(ip -o route show default 2>/dev/null | awk -v d="$default_iface" '$5==d {print $3; exit}')"
+default_dns="$(awk '/^nameserver[ \t]+/ {print $2}' /etc/resolv.conf 2>/dev/null | head -n2 | paste -sd, -)"
+
+[ -z "$default_cidr" ] && default_cidr="192.168.1.100/24"
+[ -z "$default_gw" ] && default_gw="192.168.1.1"
+[ -z "$default_dns" ] && default_dns="1.1.1.1,8.8.8.8"
+
+NETPLAN_FILE=""
 if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
-  for f in /etc/netplan/*.y*ml; do
-    [ -f "$f" ] || continue
-
-    # Netplan richiede file non troppo permissivi (evita warning/error "too open").
-    sudo chmod 600 "$f" || true
-
-    if sudo grep -Eq '^\s*dhcp4:\s*true\s*$' "$f"; then
-      if ! sudo grep -Eq '^\s*dhcp-identifier:\s*mac\s*$' "$f"; then
-        log "Aggiorno netplan: $f -> dhcp-identifier: mac"
-        sudo cp "$f" "$f.bak.$(date +%s)"
-        tmpfile="$(sudo mktemp /etc/netplan/.netplanXXXX.yaml)"
-        # Legge con sudo e scrive con sudo per evitare problemi di permessi
-        sudo awk '
-          {
-            print $0;
-            if ($0 ~ /(^|[[:space:]])dhcp4:[[:space:]]*true[[:space:]]*$/) {
-              match($0, /^[[:space:]]*/); ind=substr($0, RSTART, RLENGTH);
-              print ind "dhcp-identifier: mac";
-            }
-          }
-        ' "$f" | sudo tee "$tmpfile" >/dev/null
-        sudo mv "$tmpfile" "$f"
-        sudo chmod 600 "$f" || true
-        changed=1
-      else
-        log "Netplan già configurato in $f"
-      fi
-    fi
-  done
-  if [ "$changed" = "1" ]; then
-    log "Applico netplan"
-    sudo netplan apply || true
-  fi
+  NETPLAN_FILE="$(sudo ls /etc/netplan/*.y*ml | head -n1)"
+  log "File netplan trovato: $NETPLAN_FILE"
 else
-  log "Netplan non trovato. Verifico dhclient"
+  NETPLAN_FILE="/etc/netplan/01-ubuntu-init.yaml"
+  log "Nessun file netplan trovato: creerò $NETPLAN_FILE"
 fi
 
-# Fallback per dhclient: usa MAC come client-id
-if [ -d /etc/dhcp ]; then
-  DHCLIENT_CONF=/etc/dhcp/dhclient.conf
-  if [ -f "$DHCLIENT_CONF" ] && grep -Eq 'dhcp-client-identifier' "$DHCLIENT_CONF"; then
-    log "dhclient.conf ha già una direttiva client-id"
-  else
-    log "Configuro dhclient per usare hardware (MAC) come client-id"
-    sudo install -m 0644 /dev/null "$DHCLIENT_CONF" 2>/dev/null || true
-    sudo cp "$DHCLIENT_CONF" "$DHCLIENT_CONF.bak.$(date +%s)" 2>/dev/null || true
-    sudo bash -c "cat >> '$DHCLIENT_CONF'" <<'EOF'
-# Imposta il client-id al MAC address (RFC 2132 option 61)
-send dhcp-client-identifier = hardware;
-EOF
-  fi
+cat <<EONP
+[?] Configurazione rete Netplan:
+  D) DHCP (default)
+  S) IP statico
+Interfaccia rilevata: $default_iface
+Default correnti: IP/CIDR=$default_cidr  GW=$default_gw  DNS=$default_dns
+EONP
+read -r -p "Seleziona [D/S]: " net_mode || true
+net_mode="${net_mode:-D}"
+
+NET_IFACE="$default_iface"
+IP_CIDR="$default_cidr"
+GW4="$default_gw"
+DNS_LIST="$default_dns"
+
+if [[ "${net_mode,,}" == "s" ]]; then
+  read -r -p "Interfaccia [$default_iface]: " in_iface || true
+  [ -n "$in_iface" ] && NET_IFACE="$in_iface"
+
+  read -r -p "IP/CIDR [$default_cidr]: " in_cidr || true
+  [ -n "$in_cidr" ] && IP_CIDR="$in_cidr"
+
+  read -r -p "Gateway IPv4 [$default_gw]: " in_gw || true
+  [ -n "$in_gw" ] && GW4="$in_gw"
+
+  read -r -p "DNS (separati da virgola) [$default_dns]: " in_dns || true
+  [ -n "$in_dns" ] && DNS_LIST="$in_dns"
 fi
+
+DNS_YAML="$(printf '%s' "$DNS_LIST" | sed 's/[[:space:]]//g' | sed 's/,/, /g')"
+
+if [ -f "$NETPLAN_FILE" ]; then
+  sudo cp "$NETPLAN_FILE" "$NETPLAN_FILE.bak.$(date +%s)"
+fi
+
+if [[ "${net_mode,,}" == "s" ]]; then
+  log "Scrivo netplan statico su $NETPLAN_FILE"
+  sudo tee "$NETPLAN_FILE" >/dev/null <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${NET_IFACE}:
+      dhcp4: false
+      dhcp6: false
+      addresses: [${IP_CIDR}]
+      routes:
+        - to: default
+          via: ${GW4}
+      nameservers:
+        addresses: [${DNS_YAML}]
+EOF
+else
+  log "Scrivo netplan DHCP su $NETPLAN_FILE"
+  sudo tee "$NETPLAN_FILE" >/dev/null <<EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    ${NET_IFACE}:
+      dhcp4: true
+      dhcp-identifier: mac
+EOF
+fi
+
+# Netplan richiede file non troppo permissivi (evita warning/error "too open").
+sudo chmod 600 "$NETPLAN_FILE" || true
+
+log "Applico netplan"
+sudo netplan apply || true
 
 # ---- 2b) Imposta timezone ----
 log "Imposto timezone Europe/Rome"
