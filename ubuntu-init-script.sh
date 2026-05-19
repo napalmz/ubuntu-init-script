@@ -513,7 +513,7 @@ set -euo pipefail
 
 # Uso:
 #   Legacy: ./docker-portainer-agent-update.sh [AGENT_SECRET]
-#   Edge:   ./docker-portainer-agent-update.sh edge [EDGE_KEY] [EDGE_IDENTIFIER]
+#   Edge:   ./docker-portainer-agent-update.sh edge [EDGE_KEY] [EDGE_IDENTIFIER] [AGENT_SECRET]
 #   Forza modalità: ./docker-portainer-agent-update.sh legacy [AGENT_SECRET]
 # Persistenza config: $HOME/.config/portainer/agent.env
 
@@ -607,6 +607,7 @@ CFG
 else
   EDGE_KEY_VAL="${1:-${EDGE_KEY:-${SAVED_EDGE_KEY:-}}}"
   EDGE_IDENTIFIER_VAL="${2:-${EDGE_IDENTIFIER:-${SAVED_EDGE_IDENTIFIER:-}}}"
+  SECRET="${3:-${AGENT_SECRET:-${SAVED_SECRET:-}}}"
 
   if [[ -z "$EDGE_KEY_VAL" ]]; then
     read -r -p "EDGE_KEY: " EDGE_KEY_VAL || true
@@ -614,9 +615,12 @@ else
   if [[ -z "$EDGE_IDENTIFIER_VAL" ]]; then
     read -r -p "EDGE_IDENTIFIER: " EDGE_IDENTIFIER_VAL || true
   fi
+  if [[ -z "$SECRET" ]]; then
+    read -r -p "AGENT_SECRET: " SECRET || true
+  fi
 
-  if [[ -z "$EDGE_KEY_VAL" || -z "$EDGE_IDENTIFIER_VAL" ]]; then
-    echo "Errore: EDGE_KEY e EDGE_IDENTIFIER sono obbligatori" >&2
+  if [[ -z "$EDGE_KEY_VAL" || -z "$EDGE_IDENTIFIER_VAL" || -z "$SECRET" ]]; then
+    echo "Errore: EDGE_KEY, EDGE_IDENTIFIER e AGENT_SECRET sono obbligatori" >&2
     exit 1
   fi
 
@@ -624,6 +628,7 @@ else
 PORTAINER_MODE=edge
 EDGE_KEY=$EDGE_KEY_VAL
 EDGE_IDENTIFIER=$EDGE_IDENTIFIER_VAL
+AGENT_SECRET=$SECRET
 CFG
   chmod 600 "$CONF_FILE"
 
@@ -652,6 +657,7 @@ CFG
     -e EDGE_ID="$EDGE_IDENTIFIER_VAL" \
     -e EDGE_KEY="$EDGE_KEY_VAL" \
     -e EDGE_INSECURE_POLL=1 \
+    -e AGENT_SECRET="$SECRET" \
     "$IMAGE"
 fi
 
