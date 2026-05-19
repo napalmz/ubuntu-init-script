@@ -257,7 +257,9 @@ default_dns="$(awk '/^nameserver[ \t]+/ {print $2}' /etc/resolv.conf 2>/dev/null
 [ -z "$default_dns" ] && default_dns="1.1.1.1,8.8.8.8"
 
 NETPLAN_FILE=""
+HAS_NETPLAN=0
 if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
+  HAS_NETPLAN=1
   NETPLAN_FILE="$(sudo ls /etc/netplan/*.y*ml | head -n1)"
   log "File netplan trovato: $NETPLAN_FILE"
 else
@@ -265,15 +267,28 @@ else
   log "Nessun file netplan trovato: creerò $NETPLAN_FILE"
 fi
 
-cat <<EONP
+if [ "$HAS_NETPLAN" = "1" ]; then
+  cat <<EONP
+[?] Configurazione rete Netplan:
+  N) Non modificare (default)
+  D) DHCP
+  S) IP statico
+Interfaccia rilevata: $default_iface
+Default correnti: IP/CIDR=$default_cidr  GW=$default_gw  DNS=$default_dns
+EONP
+  read -r -p "Seleziona [N/D/S]: " net_mode || true
+  net_mode="${net_mode:-N}"
+else
+  cat <<EONP
 [?] Configurazione rete Netplan:
   D) DHCP (default)
   S) IP statico
 Interfaccia rilevata: $default_iface
 Default correnti: IP/CIDR=$default_cidr  GW=$default_gw  DNS=$default_dns
 EONP
-read -r -p "Seleziona [D/S]: " net_mode || true
-net_mode="${net_mode:-D}"
+  read -r -p "Seleziona [D/S]: " net_mode || true
+  net_mode="${net_mode:-D}"
+fi
 
 NET_IFACE="$default_iface"
 IP_CIDR="$default_cidr"
@@ -296,13 +311,16 @@ fi
 
 DNS_YAML="$(printf '%s' "$DNS_LIST" | sed 's/[[:space:]]//g' | sed 's/,/, /g')"
 
-if [ -f "$NETPLAN_FILE" ]; then
-  sudo cp "$NETPLAN_FILE" "$NETPLAN_FILE.bak.$(date +%s)"
-fi
+if [[ "${net_mode,,}" == "n" ]]; then
+  log "Configurazione rete invariata (nessuna modifica a Netplan)"
+else
+  if [ -f "$NETPLAN_FILE" ]; then
+    sudo cp "$NETPLAN_FILE" "$NETPLAN_FILE.bak.$(date +%s)"
+  fi
 
-if [[ "${net_mode,,}" == "s" ]]; then
-  log "Scrivo netplan statico su $NETPLAN_FILE"
-  sudo tee "$NETPLAN_FILE" >/dev/null <<EOF
+  if [[ "${net_mode,,}" == "s" ]]; then
+    log "Scrivo netplan statico su $NETPLAN_FILE"
+    sudo tee "$NETPLAN_FILE" >/dev/null <<EOF
 network:
   version: 2
   renderer: networkd
@@ -317,9 +335,9 @@ network:
       nameservers:
         addresses: [${DNS_YAML}]
 EOF
-else
-  log "Scrivo netplan DHCP su $NETPLAN_FILE"
-  sudo tee "$NETPLAN_FILE" >/dev/null <<EOF
+  else
+    log "Scrivo netplan DHCP su $NETPLAN_FILE"
+    sudo tee "$NETPLAN_FILE" >/dev/null <<EOF
 network:
   version: 2
   renderer: networkd
@@ -328,13 +346,14 @@ network:
       dhcp4: true
       dhcp-identifier: mac
 EOF
+  fi
+
+  # Netplan richiede file non troppo permissivi (evita warning/error "too open").
+  sudo chmod 600 "$NETPLAN_FILE" || true
+
+  log "Applico netplan"
+  sudo netplan apply || true
 fi
-
-# Netplan richiede file non troppo permissivi (evita warning/error "too open").
-sudo chmod 600 "$NETPLAN_FILE" || true
-
-log "Applico netplan"
-sudo netplan apply || true
 
 # ---- 2b) Imposta timezone ----
 log "Imposto timezone Europe/Rome"
