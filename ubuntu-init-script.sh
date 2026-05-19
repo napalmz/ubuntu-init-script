@@ -492,61 +492,151 @@ cat > "$TARGET_HOME/docker-portainer-agent-update.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Uso: ./docker-portainer-agent-update.sh [AGENT_SECRET]
-# Persistenza del secret: $HOME/.config/portainer/agent.env
-SECRET_FILE="$HOME/.config/portainer/agent.env"
-mkdir -p "$(dirname "$SECRET_FILE")"
+# Uso:
+#   Legacy: ./docker-portainer-agent-update.sh [AGENT_SECRET]
+#   Edge:   ./docker-portainer-agent-update.sh edge [EDGE_KEY] [EDGE_IDENTIFIER]
+#   Forza modalità: ./docker-portainer-agent-update.sh legacy [AGENT_SECRET]
+# Persistenza config: $HOME/.config/portainer/agent.env
+
+CONF_FILE="$HOME/.config/portainer/agent.env"
+mkdir -p "$(dirname "$CONF_FILE")"
+
+SAVED_MODE=""
 SAVED_SECRET=""
-if [ -f "$SECRET_FILE" ]; then
+SAVED_EDGE_KEY=""
+SAVED_EDGE_IDENTIFIER=""
+
+if [ -f "$CONF_FILE" ]; then
   # shellcheck disable=SC1090
-  . "$SECRET_FILE"
+  . "$CONF_FILE"
+  SAVED_MODE="${PORTAINER_MODE:-}"
   SAVED_SECRET="${AGENT_SECRET:-}"
-  # Evita che AGENT_SECRET influenzi la scelta automatica
-  unset AGENT_SECRET || true
+  SAVED_EDGE_KEY="${EDGE_KEY:-}"
+  SAVED_EDGE_IDENTIFIER="${EDGE_IDENTIFIER:-${EDGE_ID:-}}"
 fi
 
-# Precedenze: argomento > prompt con default del secret salvato (se esiste)
-SECRET="${1:-}"
-if [[ -z "${SECRET}" && -n "${SAVED_SECRET}" ]]; then
-  echo "[portainer-agent] secret salvato trovato in $SECRET_FILE"
-  read -r -p "AGENT_SECRET [Invio per riutilizzare quello salvato]: " INPUT || true
-  if [[ -z "${INPUT}" ]]; then
-    SECRET="$SAVED_SECRET"
-    echo "[portainer-agent] uso secret salvato"
-  else
-    SECRET="$INPUT"
+MODE_ARG="${1:-}"
+case "${MODE_ARG,,}" in
+  legacy|l)
+    MODE="legacy"
+    shift
+    ;;
+  edge|e)
+    MODE="edge"
+    shift
+    ;;
+  *)
+    MODE="${PORTAINER_MODE:-${SAVED_MODE:-}}"
+    ;;
+esac
+
+if [[ -z "$MODE" ]]; then
+  echo "[portainer-agent] nessuna configurazione trovata in $CONF_FILE"
+  read -r -p "Modalità [legacy/edge] (default: legacy): " MODE_INPUT || true
+  MODE="${MODE_INPUT:-legacy}"
+fi
+
+case "${MODE,,}" in
+  l|legacy) MODE="legacy" ;;
+  e|edge) MODE="edge" ;;
+  *)
+    echo "Modalità non valida: $MODE" >&2
+    exit 1
+    ;;
+esac
+
+IMAGE="${PORTAINER_AGENT_IMAGE:-portainer/agent:lts}"
+
+if [[ "$MODE" == "legacy" ]]; then
+  SECRET="${1:-${AGENT_SECRET:-${SAVED_SECRET:-}}}"
+  if [[ -z "$SECRET" ]]; then
+    read -r -p "AGENT_SECRET: " SECRET || true
   fi
-elif [[ -z "${SECRET}" ]]; then
-  read -r -p "AGENT_SECRET: " SECRET || true
+
+  if [[ -z "$SECRET" ]]; then
+    echo "Errore: AGENT_SECRET mancante" >&2
+    exit 1
+  fi
+
+  cat >"$CONF_FILE" <<CFG
+PORTAINER_MODE=legacy
+AGENT_SECRET=$SECRET
+CFG
+  chmod 600 "$CONF_FILE"
+
+  echo "[portainer-agent] pull $IMAGE"
+  sudo docker pull "$IMAGE"
+
+  if sudo docker ps -a --format '{{.Names}}' | grep -Fxq portainer_edge_agent; then
+    echo "[portainer-agent] rimuovo eventuale container edge"
+    sudo docker stop portainer_edge_agent || true
+    sudo docker rm portainer_edge_agent || true
+  fi
+  if sudo docker ps -a --format '{{.Names}}' | grep -Fxq portainer_agent; then
+    echo "[portainer-agent] stop+rm container legacy esistente"
+    sudo docker stop portainer_agent || true
+    sudo docker rm portainer_agent || true
+  fi
+
+  echo "[portainer-agent] run legacy"
+  sudo docker run --name portainer_agent --restart=always -d \
+    -p 9001:9001 \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /var/lib/docker/volumes:/var/lib/docker/volumes \
+    -e AGENT_SECRET="$SECRET" \
+    "$IMAGE"
+else
+  EDGE_KEY_VAL="${1:-${EDGE_KEY:-${SAVED_EDGE_KEY:-}}}"
+  EDGE_IDENTIFIER_VAL="${2:-${EDGE_IDENTIFIER:-${SAVED_EDGE_IDENTIFIER:-}}}"
+
+  if [[ -z "$EDGE_KEY_VAL" ]]; then
+    read -r -p "EDGE_KEY: " EDGE_KEY_VAL || true
+  fi
+  if [[ -z "$EDGE_IDENTIFIER_VAL" ]]; then
+    read -r -p "EDGE_IDENTIFIER: " EDGE_IDENTIFIER_VAL || true
+  fi
+
+  if [[ -z "$EDGE_KEY_VAL" || -z "$EDGE_IDENTIFIER_VAL" ]]; then
+    echo "Errore: EDGE_KEY e EDGE_IDENTIFIER sono obbligatori" >&2
+    exit 1
+  fi
+
+  cat >"$CONF_FILE" <<CFG
+PORTAINER_MODE=edge
+EDGE_KEY=$EDGE_KEY_VAL
+EDGE_IDENTIFIER=$EDGE_IDENTIFIER_VAL
+CFG
+  chmod 600 "$CONF_FILE"
+
+  echo "[portainer-agent] pull $IMAGE"
+  sudo docker pull "$IMAGE"
+
+  if sudo docker ps -a --format '{{.Names}}' | grep -Fxq portainer_agent; then
+    echo "[portainer-agent] rimuovo eventuale container legacy"
+    sudo docker stop portainer_agent || true
+    sudo docker rm portainer_agent || true
+  fi
+  if sudo docker ps -a --format '{{.Names}}' | grep -Fxq portainer_edge_agent; then
+    echo "[portainer-agent] stop+rm container edge esistente"
+    sudo docker stop portainer_edge_agent || true
+    sudo docker rm portainer_edge_agent || true
+  fi
+
+  echo "[portainer-agent] run edge"
+  sudo docker run --name portainer_edge_agent --restart=always -d \
+    -p 9001:9001 \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /var/lib/docker/volumes:/var/lib/docker/volumes \
+    -v /:/host \
+    -v portainer_agent_data:/data \
+    -e EDGE=1 \
+    -e EDGE_ID="$EDGE_IDENTIFIER_VAL" \
+    -e EDGE_KEY="$EDGE_KEY_VAL" \
+    -e EDGE_INSECURE_POLL=1 \
+    "$IMAGE"
 fi
 
-if [[ -z "${SECRET}" ]]; then
-  echo "Errore: AGENT_SECRET mancante" >&2
-  exit 1
-fi
-
-# Salva/aggiorna secret in chiaro con permessi restrittivi
-printf 'AGENT_SECRET=%s\n' "$SECRET" >"$SECRET_FILE"
-chmod 600 "$SECRET_FILE"
-
-echo "[portainer-agent] pull latest"
-sudo docker pull portainer/agent:latest
-
-if sudo docker ps -a --format '{{.Names}}' | grep -Fxq portainer_agent; then
-  echo "[portainer-agent] stop+rm container esistente"
-  sudo docker stop portainer_agent || true
-  sudo docker rm portainer_agent || true
-fi
-
-echo "[portainer-agent] run container"
-sudo docker run --name portainer_agent --restart=always -d \
-  -p 9001:9001 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /var/lib/docker/volumes:/var/lib/docker/volumes \
-  -e AGENT_SECRET="$SECRET" \
-  portainer/agent:latest
-
-echo "[portainer-agent] ok"
+echo "[portainer-agent] ok ($MODE)"
 EOF
 
 sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh,docker-portainer-agent-update.sh}
