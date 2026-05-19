@@ -247,6 +247,10 @@ changed=0
 if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
   for f in /etc/netplan/*.y*ml; do
     [ -f "$f" ] || continue
+
+    # Netplan richiede file non troppo permissivi (evita warning/error "too open").
+    sudo chmod 600 "$f" || true
+
     if sudo grep -Eq '^\s*dhcp4:\s*true\s*$' "$f"; then
       if ! sudo grep -Eq '^\s*dhcp-identifier:\s*mac\s*$' "$f"; then
         log "Aggiorno netplan: $f -> dhcp-identifier: mac"
@@ -263,6 +267,7 @@ if sudo ls /etc/netplan/*.y*ml >/dev/null 2>&1; then
           }
         ' "$f" | sudo tee "$tmpfile" >/dev/null
         sudo mv "$tmpfile" "$f"
+        sudo chmod 600 "$f" || true
         changed=1
       else
         log "Netplan già configurato in $f"
