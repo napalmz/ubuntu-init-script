@@ -22,12 +22,13 @@ SCRIPT_SRC="${BASH_SOURCE[0]:-$0}"
 log "User: $TARGET_USER  Home: $TARGET_HOME  Codename: $OS_CODENAME  Arch: $ARCH  Script: $SCRIPT_SRC"
 
 version_check() {
-  # Calcola hash locale dello script in esecuzione
+  # Calcola hash locale solo se lo script arriva da un file regolare.
+  # Con `bash <(curl ...)` il sorgente e' tipicamente `/dev/fd/...`: rileggerlo qui
+  # puo' consumare lo stream prima che Bash esegua il resto dello script.
   local local_hash
-  if [ -r "$SCRIPT_SRC" ]; then
+  if [ -f "$SCRIPT_SRC" ] && [ -r "$SCRIPT_SRC" ]; then
     local_hash="$(sha256sum "$SCRIPT_SRC" 2>/dev/null | awk '{print $1}')"
   else
-    # prova a leggere dallo stdin della shell corrente se stream
     local_hash="unknown"
   fi
 
