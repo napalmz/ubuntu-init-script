@@ -18,6 +18,7 @@ REPO_NAME="${INIT_REPO_NAME:-ubuntu-init-script}"
 BRANCH="${INIT_BRANCH:-main}"
 SCRIPT_PATH="${INIT_SCRIPT_PATH:-ubuntu-init-script.sh}"
 SCRIPT_SRC="${BASH_SOURCE[0]:-$0}"
+DOCKCHECK_URL="${INIT_DOCKCHECK_URL:-https://raw.githubusercontent.com/mag37/dockcheck/main/dockcheck.sh}"
 
 log "User: $TARGET_USER  Home: $TARGET_HOME  Codename: $OS_CODENAME  Arch: $ARCH  Script: $SCRIPT_SRC"
 
@@ -506,6 +507,15 @@ echo "Esegui login su Tailscale..."
 sudo tailscale up --ssh
 EOF
 
+# dockcheck.sh (sempre aggiornato dal repo ufficiale)
+log "Scarico/Aggiorno dockcheck in $TARGET_HOME/dockcheck.sh"
+if curl -fsSL --retry 3 --retry-connrefused "$DOCKCHECK_URL" -o "$TARGET_HOME/dockcheck.sh"; then
+  sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/dockcheck.sh"
+  chmod +x "$TARGET_HOME/dockcheck.sh"
+else
+  log "Impossibile scaricare dockcheck da $DOCKCHECK_URL"
+fi
+
 # docker-portainer-agent-update.sh
 cat > "$TARGET_HOME/docker-portainer-agent-update.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -664,8 +674,8 @@ fi
 echo "[portainer-agent] ok ($MODE)"
 EOF
 
-sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh,docker-portainer-agent-update.sh}
-chmod +x "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh,docker-portainer-agent-update.sh}
+sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh,docker-portainer-agent-update.sh,dockcheck.sh}
+chmod +x "$TARGET_HOME/"{upgrade.sh,docker-prune.sh,sysinfo.sh,tailscale-up.sh,docker-portainer-agent-update.sh,dockcheck.sh}
 
 # ---- 6) Utilities: logrotate present ----
 if need_pkg logrotate; then
