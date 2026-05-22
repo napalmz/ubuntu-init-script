@@ -175,6 +175,45 @@ else
   log "Aggiornamento sistema saltato"
 fi
 
+# ---- 2a) Check nuova release LTS (solo proposta comandi) ----
+log "Controllo disponibilità di una nuova release Ubuntu LTS"
+if ! command -v do-release-upgrade >/dev/null 2>&1; then
+  log "Installo update-manager-core per verifica release"
+  sudo apt-get install -y update-manager-core || true
+fi
+
+if command -v do-release-upgrade >/dev/null 2>&1; then
+  lts_check_output="$(sudo do-release-upgrade -c 2>&1 || true)"
+  if printf '%s' "$lts_check_output" | grep -Eqi "new release .*LTS.* available"; then
+    lts_new_version="$(printf '%s\n' "$lts_check_output" | sed -n "s/.*New release '\([^']\+\)'.*/\1/p" | head -n1)"
+    if [ -z "$lts_new_version" ]; then
+      lts_new_version="$(printf '%s\n' "$lts_check_output" | grep -Eo "[0-9]{2}\.[0-9]{2}(\.[0-9]+)?( LTS)?" | head -n1)"
+    fi
+
+    if [ -n "$lts_new_version" ]; then
+      log "Trovata una nuova release LTS disponibile: $lts_new_version"
+    else
+      log "Trovata una nuova release LTS disponibile"
+    fi
+
+    cat <<EOLTS
+[?] Nuova release LTS rilevata${lts_new_version:+: $lts_new_version}. Comandi suggeriti (NON eseguiti automaticamente):
+  sudo do-release-upgrade
+EOLTS
+
+    read -r -p "[?] Vuoi interrompere ora lo script per fare l'upgrade LTS? (y/N): " ans_lts_stop || true
+    if [[ "${ans_lts_stop,,}" == "y" ]]; then
+      log "Interrompo lo script. Esegui i comandi suggeriti per l'upgrade LTS."
+      exit 0
+    fi
+    log "Proseguo con i passi successivi dello script"
+  else
+    log "Nessuna nuova release LTS disponibile"
+  fi
+else
+  log "Impossibile verificare release LTS (do-release-upgrade non disponibile)"
+fi
+
 #
 # ---- 2c) Hostname: opzionale con prompt ----
 current_hn="$(hostname)"
